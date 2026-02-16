@@ -2,9 +2,27 @@ import numpy as np
 import cv2
 import torch
 
+"""
+LSM (Liquid State Machine) Weight Initialization Module
+
+This module provides various weight initialization strategies for LSM reservoirs,
+including Gabor filter banks and different connectivity patterns (partitioned,
+receptive field-based, short/long-distance connections).
+"""
+
 
 def gabor_filter(theta, lambda_val, sigma=10.0, gamma=0.5):
-    """Generate a Gabor filter."""
+    """Generate a Gabor filter.
+
+    Args:
+        theta: Orientation angle in radians
+        lambda_val: Wavelength of the sinusoidal wave
+        sigma: Standard deviation of Gaussian envelope
+        gamma: Spatial aspect ratio
+
+    Returns:
+        Normalized Gabor filter kernel
+    """
     phi = np.pi / 2  # Phase offset
     kernel_size = 5  # Reduced kernel size
     kernel = cv2.getGaborKernel(
@@ -16,12 +34,20 @@ def gabor_filter(theta, lambda_val, sigma=10.0, gamma=0.5):
         phi,
         ktype=cv2.CV_64F,
     )
-    kernel = kernel / np.linalg.norm(kernel)  # Normalize t
+    kernel = kernel / np.linalg.norm(kernel)  # Normalize kernel
     return kernel
 
 
 def build_gabor_filter_bank(thetas, lambdas):
-    """Build a Gabor filter bank."""
+    """Build a Gabor filter bank for input encoding.
+
+    Args:
+        thetas: List of orientation angles
+        lambdas: List of wavelengths
+
+    Returns:
+        Stacked tensor of Gabor filters (num_filters, 2, kernel_size, kernel_size)
+    """
     filters = []
     for theta in thetas:
         for lambda_val in lambdas:
@@ -47,10 +73,31 @@ def initWeights1(
     init_Wlsm=True,
     W_lsm=None,
 ):
+    """Initialize input and recurrent weights for basic LSM.
+
+    Creates random input weights with specified connection density,
+    and recurrent weights based on distance-dependent connectivity probabilities
+    with excitatory/inhibitory neuron interactions.
+
+    Args:
+        LqWin: Input weight magnitude
+        LqWlsm: Recurrent weight magnitude
+        in_conn_density: Fraction of connected input neurons
+        in_size: Number of input neurons
+        lam: Distance decay parameter (lambda)
+        inh_fr: Fraction of inhibitory neurons
+        Nx, Ny, Nz: Reservoir dimensions
+        init_Wlsm: Whether to initialize recurrent weights
+        W_lsm: Pre-computed recurrent weights (optional)
+
+    Returns:
+        Tuple of (input_weight_matrix, recurrent_weight_matrix) - transposed for PyTorch compatibility
+    """
     N = Nx * Ny * Nz
     W_in = np.zeros((in_size, N))
     in_conn_range = np.int32(N * in_conn_density)
 
+    # Initialize random input connections
     for i in range(in_size):
         input_perm_i = np.arange(N)
         np.random.shuffle(input_perm_i)
@@ -59,14 +106,16 @@ def initWeights1(
         W_in[i, pos_conn] = LqWin
         W_in[i, neg_conn] = -LqWin
 
+    # Shuffle neuron indices and define inhibitory fraction
     input_perm = np.arange(N)
-    np.random.shuffle(input_perm)  # first 0.2*N indices are inhibitory
-    inh_range = np.int32(inh_fr * N)  # indices 0 to inh_range-1 are inhibitory
+    np.random.shuffle(input_perm)
+    inh_range = np.int32(inh_fr * N)
 
+    # Initialize recurrent weights based on distance-dependent connectivity
     if init_Wlsm:
         W_lsm = np.zeros((N, N))
         for i in range(N):
-            posti = input_perm[i]  # input_perm[i] is the post-neuron index
+            posti = input_perm[i]  # input_perm[i] is the pre-neuron index
             zi = posti // (Nx * Ny)
             yi = (posti - zi * Nx * Ny) // Nx
             xi = (posti - zi * Nx * Ny) % Nx
@@ -76,6 +125,8 @@ def initWeights1(
                 yj = (prej - zj * Nx * Ny) // Nx
                 xj = (prej - zj * Nx * Ny) % Nx
                 D = (xi - xj) ** 2 + (yi - yj) ** 2 + (zi - zj) ** 2
+
+                # Connection probabilities depend on neuron types (E/I)
                 if i < inh_range and j < inh_range:  # II connection, C = 0.3
                     P = 0.3 * np.exp(-D / lam)
                     Pu1 = np.random.uniform()
@@ -97,6 +148,7 @@ def initWeights1(
                     if Pu1 < P:
                         W_lsm[prej, posti] = LqWlsm
 
+        # Remove self-connections
         for i in range(N):
             W_lsm[i, i] = 0
 
@@ -118,6 +170,11 @@ def initWeights_embed_Gabor_in(
     init_Wlsm=True,
     W_lsm=None,
 ):
+    """Initialize weights for LSM with Gabor-embedded input (spatial structure).
+
+    Partitions input and reservoir by channels, applying identity-based
+    input weights to preserve spatial structure.
+    """
     Res_H = np.int32(Res_H)
     Res_W = np.int32(Res_W)
     Res_ch = np.int32(Res_ch)
@@ -125,6 +182,7 @@ def initWeights_embed_Gabor_in(
     N = np.int32(Res_H * Res_W * Res_ch)
     partition_N = np.int32(Res_H * Res_W * partition_ch)
 
+    # Create identity-based input weights for each partition
     W_in_identity = LqWin * np.identity(N)
     W_ins = []
 
@@ -135,6 +193,7 @@ def initWeights_embed_Gabor_in(
         ]
         W_ins.append(W_in.T)
 
+    # Initialize recurrent weights within partitions
     input_perm = np.arange(partition_N)
     np.random.shuffle(input_perm)  # first 0.2*N indices are inhibitory
     inh_range = np.int32(
@@ -145,10 +204,10 @@ def initWeights_embed_Gabor_in(
         W_lsm_part = np.zeros((partition_N, partition_N))
         W_lsm = np.zeros((N, N))
         for i in range(partition_N):
-            posti = input_perm[i]  # input_perm[i] is the post-neuron index
-            chi = posti // (Res_H * Res_W)  # ch refers to channel dimension
-            yi = (posti - chi * Res_H * Res_W) // Res_W  # y refers to ROWS (height)
-            xi = (posti - chi * Res_H * Res_W) % Res_W  # x refers to COLS (width)
+            posti = input_perm[i]
+            chi = posti // (Res_H * Res_W)  # Channel index
+            yi = (posti - chi * Res_H * Res_W) // Res_W  # Row (height)
+            xi = (posti - chi * Res_H * Res_W) % Res_W  # Column (width)
             for j in range(partition_N):
                 prej = input_perm[j]  # input_perm[j] is the pre-neuron index
                 chj = prej // (Res_H * Res_W)
@@ -285,6 +344,7 @@ def initWeights_partition(
         for i in range(partition_N):
             W_lsm_part[i, i] = 0
 
+        # Replicate partition weights across all partitions
         for part in range(num_partitions):
             W_lsm[
                 part * partition_N : (part + 1) * partition_N,

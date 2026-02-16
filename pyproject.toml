@@ -9,5 +9,6 @@ dependencies = [
     "numba>=0.63.1",
     "numpy>=2.3.5",
     "snntorch>=0.9.4",
+    "tonic>=1.4.3",
     "torch>=2.10.0",
 ]

@@ -1,16 +1,18 @@
 import torch
-import torchvision
-from torch.utils.data import DataLoader
 import torch.nn as nn
 
 import snntorch as snn
 
 
 class LSM(nn.Module):
+    """Liquid State Machine (LSM) with spiking neural network."""
+
     def __init__(self, N, in_sz, Win, Wlsm, alpha=0.9, beta=0.9, th=20):
         super().__init__()
+        # Input layer: projects input to reservoir
         self.fc1 = nn.Linear(in_sz, N)
         self.fc1.weight = nn.Parameter(torch.from_numpy(Win))
+        # RSynaptic neuron layer: reservoir with recurrent connections
         self.lsm = snn.RSynaptic(
             alpha=alpha, beta=beta, all_to_all=True, linear_features=N, threshold=th
         )
@@ -18,8 +20,10 @@ class LSM(nn.Module):
 
     def forward(self, x):
         num_steps = x.size(0)
+        # Initialize spike, synaptic current, and membrane potential
         spk, syn, mem = self.lsm.init_rsynaptic()
         spk_rec = []
+        # Process each timestep
         for step in range(num_steps):
             curr = self.fc1(x[step])
             spk, syn, mem = self.lsm(curr, spk, syn, mem)
@@ -29,6 +33,8 @@ class LSM(nn.Module):
 
 
 class LSM_partition(nn.Module):
+    """LSM with time-partitioned input weights."""
+
     def __init__(
         self, N, in_sz, Wins, Wlsm, num_partitions, alpha=0.9, beta=0.9, th=20
     ):
@@ -48,6 +54,7 @@ class LSM_partition(nn.Module):
         spk_rec = []
         partition_steps = num_steps // self.num_partitions
         Win_ind = 0
+        # Cycle through input weight matrices across time partitions
         for step in range(num_steps):
             if step % partition_steps == 0:
                 self.fc1.weight = nn.Parameter(
@@ -62,6 +69,8 @@ class LSM_partition(nn.Module):
 
 
 class LSM_partition_cross_partition_inh(nn.Module):
+    """LSM with time-partitioned input weights and cross-partition inhibition."""
+
     def __init__(
         self,
         N,
@@ -79,6 +88,7 @@ class LSM_partition_cross_partition_inh(nn.Module):
         self.num_partitions = num_partitions
         self.fc1 = nn.Linear(in_sz, N)
         self.fc1.weight = nn.Parameter(torch.from_numpy(Wins[0]))
+        # Long-range inhibitory connections between partitions
         self.long_inh = nn.Linear(N, N)
         self.long_inh.weight = nn.Parameter(torch.from_numpy(Wlsm_long))
         self.lsm = snn.RSynaptic(
@@ -99,6 +109,7 @@ class LSM_partition_cross_partition_inh(nn.Module):
                 )
                 Win_ind = (Win_ind + 1) % self.num_partitions
 
+            # Add cross-partition inhibitory input after first partition
             if step > partition_steps:
                 curr = self.fc1(x[step]) + self.long_inh(
                     spk_rec[step - partition_steps]
@@ -112,6 +123,8 @@ class LSM_partition_cross_partition_inh(nn.Module):
 
 
 class Gabor_LSM_partition(nn.Module):
+    """LSM with Gabor filter preprocessing and time-partitioned input weights."""
+
     def __init__(
         self,
         N,
@@ -126,9 +139,11 @@ class Gabor_LSM_partition(nn.Module):
         th=20,
     ):
         super().__init__()
+        # Extract Gabor filter dimensions
         in_ch = Gabor_filters.shape[1]
         out_ch = Gabor_filters.shape[0]
         k_sz = (Gabor_filters.shape[2], Gabor_filters.shape[3])
+        # Gabor convolution layer for preprocessing
         self.gabor_filter = nn.Conv2d(
             in_ch,
             out_ch,
@@ -161,6 +176,7 @@ class Gabor_LSM_partition(nn.Module):
                     torch.from_numpy(self.Wins[Win_ind]).to(device)
                 )
                 Win_ind = (Win_ind + 1) % self.num_partitions
+            # Apply Gabor filtering and flatten output
             # gabor_out = nn.functional.conv2d(x[step], self.G_filters, stride=self.conv_stride, padding=0)
             gabor_out = self.gabor_filter(x[step])
             gabor_out_flat = torch.reshape(gabor_out, (gabor_out.shape[0], -1))

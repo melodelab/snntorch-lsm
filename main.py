@@ -21,6 +21,7 @@ if __name__ == "__main__":
         ]
     )
 
+    # Load NMNIST train and test datasets
     trainset = tonic.datasets.NMNIST(
         save_to="./data", transform=frame_transform, train=True
     )
@@ -28,9 +29,11 @@ if __name__ == "__main__":
         save_to="./data", transform=frame_transform, train=False
     )
 
+    # Cache datasets to disk for faster loading
     cached_trainset = DiskCachedDataset(trainset, cache_path="./cache/nmnist/train")
     cached_testset = DiskCachedDataset(testset, cache_path="./cache/nmnist/test")
 
+    # Create data loaders with padding collation
     batch_size = 256
     trainloader = DataLoader(
         cached_trainset,
@@ -44,7 +47,7 @@ if __name__ == "__main__":
         collate_fn=tonic.collation.PadTensors(batch_first=False),
     )
 
-    # Set device
+    # Set device to MPS (Metal Performance Shaders) if available, otherwise CPU
     device = (
         torch.device("mps")
         if torch.backends.mps.is_available()
@@ -53,6 +56,7 @@ if __name__ == "__main__":
     # device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     print(device)
 
+    # Get sample batch to determine input size
     data, targets = next(iter(trainloader))
     flat_data = torch.reshape(data, (data.shape[0], data.shape[1], -1))
     print("data shape: ", data.shape)
@@ -60,19 +64,21 @@ if __name__ == "__main__":
 
     in_sz = flat_data.shape[-1]
 
-    # Set neuron parameters
-    tauV = 16.0
-    tauI = 16.0
-    th = 20
-    curr_prefac = np.float32(1 / tauI)
-    alpha = np.float32(np.exp(-1 / tauI))
-    beta = np.float32(1 - 1 / tauV)
+    # Set neuron parameters for LSM
+    tauV = 16.0  # Voltage time constant
+    tauI = 16.0  # Current time constant
+    th = 20  # Spike threshold
+    curr_prefac = np.float32(1 / tauI)  # Current prefactor
+    alpha = np.float32(np.exp(-1 / tauI))  # Exponential decay for current
+    beta = np.float32(1 - 1 / tauV)  # Exponential decay for voltage
 
-    Nz = 10
-    # Win, Wlsm = initWeights1(27, 2, 0.15, in_sz, Nz=Nz)
+    # Initialize LSM weights
+    Nz = 10  # Number of neurons per layer
     Win, Wlsm = initWeights1(27, 2, 0.15, in_sz, Nz=Nz)
     abs_W_lsm = np.abs(Wlsm)
     print("average fan out: ", np.mean(np.sum(abs_W_lsm > 0, axis=1)))
+    
+    # Create and move LSM network to device
     N = Wlsm.shape[0]
     lsm_net = LSM(
         N,
@@ -83,9 +89,11 @@ if __name__ == "__main__":
         beta=beta,
         th=th,
     ).to(device)
+    
     num_partitions = 3
     lsm_net.eval()
-    # Run with no_grad for LSM
+    
+    # Process training data through LSM and collect spike outputs
     with torch.no_grad():
         start_time = time.time()
         for i, (data, targets) in enumerate(iter(trainloader)):
@@ -96,6 +104,8 @@ if __name__ == "__main__":
             )
             part_steps = flat_data.shape[0] // num_partitions
             spk_rec = lsm_net(flat_data)
+            
+            # Partition spike output and compute mean across partitions
             if i == 0:
                 lsm_parts = []
                 for part in range(num_partitions):
@@ -130,6 +140,7 @@ if __name__ == "__main__":
 
         print("running time of training epoch: ", end_time - start_time, "seconds")
 
+        # Process test data through LSM and collect spike outputs
         for i, (data, targets) in enumerate(iter(testloader)):
             if i % 25 == 24:
                 print("test batches completed: ", i)
@@ -138,6 +149,8 @@ if __name__ == "__main__":
             )
             part_steps = flat_data.shape[0] // num_partitions
             spk_rec = lsm_net(flat_data)
+            
+            # Partition spike output and compute mean across partitions
             if i == 0:
                 lsm_parts = []
                 for part in range(num_partitions):
@@ -169,6 +182,7 @@ if __name__ == "__main__":
                     (lsm_label_test, np.int32(targets.numpy())), axis=0
                 )
 
+    # Print output shapes and statistics
     print(lsm_out_train.shape)
     print(lsm_out_test.shape)
 
@@ -181,9 +195,11 @@ if __name__ == "__main__":
     print("mean LSM spiking (train) : ", np.mean(lsm_out_train))
     print("mean LSM spiking (test) : ", np.mean(lsm_out_test))
 
+    # Train linear classifier on LSM outputs
     print("training linear model:")
     clf = linear_model.SGDClassifier(max_iter=10000, tol=1e-6)
     clf.fit(lsm_out_train, lsm_label_train)
 
+    # Evaluate classifier on test set
     score = clf.score(lsm_out_test, lsm_label_test)
     print("test score = " + str(score))
