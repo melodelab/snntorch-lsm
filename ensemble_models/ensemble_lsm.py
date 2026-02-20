@@ -9,7 +9,7 @@ from sklearn import linear_model
 import time
 
 from lsm_weight_definitions import initWeights_partitionV2
-from lsm_models import LSM, LSM_partition
+from modules.lsm_models import LSM, LSM_partition
 
 
 def simple_ensemble_lsm(in_conn, num_res=2, num_partitions=1, Nz=12):

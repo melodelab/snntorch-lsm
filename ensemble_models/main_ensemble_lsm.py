@@ -9,7 +9,7 @@ from sklearn import linear_model
 import time
 
 from lsm_weight_definitions import initWeights1, initWeights_partitionV2
-from lsm_models import LSM, LSM_partition
+from modules.lsm_models import LSM, LSM_partition
 
 if __name__ == "__main__":
     # Load dataset (Using NMNIST here)

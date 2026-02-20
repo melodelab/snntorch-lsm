@@ -12,7 +12,7 @@ from lsm_weight_definitions import (
     build_gabor_filter_bank,
     initWeights_receptive_field_short_long_dist_partition,
 )
-from lsm_models import Gabor_LSM_partition
+from modules.lsm_models import Gabor_LSM_partition
 
 if __name__ == "__main__":
     # Load dataset (Using NMNIST here)

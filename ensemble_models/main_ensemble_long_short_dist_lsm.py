@@ -12,7 +12,7 @@ from lsm_weight_definitions import (
     initWeights_short_long_dist_partition,
     initWeights_receptive_field_short_long_dist_partition,
 )
-from lsm_models import LSM_partition
+from modules.lsm_models import LSM_partition
 
 if __name__ == "__main__":
     # Load dataset (Using NMNIST here)

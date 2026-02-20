@@ -9,7 +9,7 @@ from sklearn import linear_model
 import time
 
 from lsm_weight_definitions import initWeights1
-from lsm_models import LSM
+from modules.lsm_models import LSM
 
 if __name__ == "__main__":
     # Load dataset (Using NMNIST here)
@@ -77,7 +77,7 @@ if __name__ == "__main__":
     Win, Wlsm = initWeights1(27, 2, 0.15, in_sz, Nz=Nz)
     abs_W_lsm = np.abs(Wlsm)
     print("average fan out: ", np.mean(np.sum(abs_W_lsm > 0, axis=1)))
-    
+
     # Create and move LSM network to device
     N = Wlsm.shape[0]
     lsm_net = LSM(
@@ -89,10 +89,10 @@ if __name__ == "__main__":
         beta=beta,
         th=th,
     ).to(device)
-    
+
     num_partitions = 3
     lsm_net.eval()
-    
+
     # Process training data through LSM and collect spike outputs
     with torch.no_grad():
         start_time = time.time()
@@ -104,7 +104,7 @@ if __name__ == "__main__":
             )
             part_steps = flat_data.shape[0] // num_partitions
             spk_rec = lsm_net(flat_data)
-            
+
             # Partition spike output and compute mean across partitions
             if i == 0:
                 lsm_parts = []
@@ -149,7 +149,7 @@ if __name__ == "__main__":
             )
             part_steps = flat_data.shape[0] // num_partitions
             spk_rec = lsm_net(flat_data)
-            
+
             # Partition spike output and compute mean across partitions
             if i == 0:
                 lsm_parts = []
